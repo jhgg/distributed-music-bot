@@ -316,3 +316,9 @@ class ClientBase(object):
     def handle_pong(self, latest_latency):
         pass
 
+    @property
+    def latest_ping(self):
+        if self._pings:
+            return self._pings[-1]
+
+        return 0

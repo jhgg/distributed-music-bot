@@ -4,6 +4,7 @@ import discord.ext.commands
 
 
 class Client(discord.Client):
+
     ## This works for now but is not ideal. The shim works though.
     @asyncio.coroutine
     def join_voice_channel(self, channel):
@@ -19,6 +20,8 @@ class Client(discord.Client):
             raise discord.ClientException('Already connected to a voice channel in this server')
 
         proxy = yield from self.rpc_server.make_voice_client_proxy(str(server.region))
+        if not proxy:
+            return None
 
         # log.info('attempting to join voice channel {0.name}'.format(channel))
 

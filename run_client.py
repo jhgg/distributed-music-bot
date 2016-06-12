@@ -1,10 +1,10 @@
 import asyncio
-import voice.client
+import voice.worker
 
 
 def run():
     loop = asyncio.get_event_loop()
-    client = voice.client.Client(
+    client = voice.worker.VoiceWorker(
         loop=loop,
         host='localhost',
         port=3000,

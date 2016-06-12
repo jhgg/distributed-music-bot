@@ -1,12 +1,17 @@
 import codecs
 import os
 
+import discord
+
 import rpc.server
+from lib.event_emitter import EventEmitter
 from rpc.base import s
 
 
-class RemoteVoiceClient(object):
+class RemoteVoiceClient(EventEmitter):
     def __init__(self, client, remote_ref):
+        super(RemoteVoiceClient, self).__init__()
+
         self.client = client
         self.remote_ref = remote_ref
         self.channel = None
@@ -28,9 +33,22 @@ class RemoteVoiceClient(object):
     def server(self):
         return self.channel.server
 
+    async def move_to(self, channel):
+        if str(getattr(channel, 'type', 'text')) != 'voice':
+            raise discord.InvalidArgument('Must be a voice channel.')
+
+        await self.client.server.discord.ws.voice_state(self.guild_id, channel.id)
+
     async def disconnect(self):
         await self.client.server.discord.ws.voice_state(self.guild_id, None, self_mute=True)
-        return await self.remote_call('disconnect', silent=True)
+        ret_value = await self.remote_call('disconnect', silent=True)
+        self.emit('disconnect', ret_value)
+        return ret_value
+
+    async def connect(self):
+        ret_value = await self.remote_call('connect')
+        self.emit('connected', ret_value)
+        return ret_value
 
     def __getattr__(self, item):
         def remote_function(*args, **kwargs):
@@ -58,6 +76,7 @@ class ClientHandler(rpc.server.ClientHandler):
     def handle_close(self, reason=None):
         for voice_client in self.refs.values():
             self.loop.create_task(self.server.discord.ws.voice_state(voice_client.guild_id, None))
+            voice_client.emit('down', reason)
 
         self.refs.clear()
 
@@ -123,7 +142,7 @@ class Server(rpc.server.Server):
     async def make_voice_client_proxy(self, region):
         client = self.select_client(region)
         if not client:
-            raise RuntimeError("no servers available to handle this client")
+            return None
 
         return await client.make_voice_client_ref()
 

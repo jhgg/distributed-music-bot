@@ -34,6 +34,7 @@ class RemoteVoiceClientWrapper(object):
         self.client = client
         self.remote_ref = remote_ref
         self.voice_client = None
+        self.current_player = None
 
     def __init_voice_client__(self, *args, **kwargs):
         if self.voice_client:
@@ -52,17 +53,43 @@ class RemoteVoiceClientWrapper(object):
     async def disconnect(self, silent=False):
         await self.voice_client.disconnect(silent=silent)
         self.voice_client = None
+        self.current_player = None
         self.client.remove_remote_voice_client_wrapper(self.remote_ref)
 
     async def play(self, what, *, ytdl_options):
-        player = await self.voice_client.create_ytdl_player(what, ytdl_options=ytdl_options)
+        if self.current_player:
+            self.current_player.stop()
+
+        self.current_player = player = await self.voice_client.create_ytdl_player(what, ytdl_options=ytdl_options)
         player.start()
         return str(player)
 
+    async def stop(self):
+        if self.current_player:
+            self.current_player.stop()
+            self.current_player = None
+            return True
 
-class Client(rpc.client.Client):
+        return False
+
+    async def pause(self):
+        if self.current_player:
+            self.current_player.pause()
+            return True
+
+        return False
+
+    async def resume(self):
+        if self.current_player:
+            self.current_player.resume()
+            return True
+
+        return False
+
+
+class VoiceWorker(rpc.client.Client):
     def __init__(self, *args, **kwargs):
-        super(Client, self).__init__(*args, **kwargs)
+        super(VoiceWorker, self).__init__(*args, **kwargs)
         self._voice_client_ref_seq = 0
         self._voice_clients = {}
         self._max_clients = 15
@@ -105,3 +132,4 @@ class Client(rpc.client.Client):
             "max_clients": self._max_clients,
             "acceptable_regions": self._acceptable_regions
         }
+

@@ -1,9 +1,10 @@
 import asyncio
+
 from discord.ext import commands
+
 import bot.client
-from bot.music import Music
-import voice.server
 import secrets
+import voice.server
 
 loop = asyncio.get_event_loop()
 discord = bot.client.Bot(loop=loop, command_prefix=commands.when_mentioned_or('$'),
@@ -21,6 +22,6 @@ async def on_ready():
 
 rpc_server.start()
 discord.rpc_server = rpc_server
-discord.add_cog(Music(discord))
+discord.load_extension('bot.cogs.loader')
 
 discord.run(secrets.discord_token)
