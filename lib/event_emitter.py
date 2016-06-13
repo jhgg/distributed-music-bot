@@ -12,7 +12,7 @@ class EventEmitter:
         if event not in self._events:
             return
 
-        for cb in self._events[event]:
+        for cb in list(self._events[event]):
             # noinspection PyBroadException
             try:
                 if asyncio.iscoroutinefunction(cb):

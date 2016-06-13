@@ -18,7 +18,7 @@ class ClientHandler(ClientBase):
         data = await self.next_packet('auth:login')
         # Clients are identified by an id/secret pair, that is retrieved by the get_client_secret function
         # that should be implemented in the subclass of the Server
-        client_id = data['client_id']
+        self.client_id = client_id = s(data['client_id'])
         client_secret = self.server.get_client_secret(client_id)
 
         # We don't know of a client with that ID.
@@ -61,7 +61,6 @@ class ClientHandler(ClientBase):
         if op == 'auth:fail':
             raise HandshakeError(data['reason'])
 
-        self.client_id = s(client_id)
         return data['info']
 
     async def start(self):

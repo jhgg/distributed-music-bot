@@ -1,27 +1,32 @@
 from copy import copy
 import asyncio
 
+from lib.event_emitter import EventEmitter
+from time import time
 
 class SyncerState(object):
-    NONE = 0
     AWAITING_CLIENT = "AWAITING CLIENT"
     DISCONNECTED = "DISCONNECTED"
     CONNECTED = "CONNECTED"
     HALT = "HALT"
 
 
-class VoiceStateSyncer(object):
+class VoiceStateSyncer(EventEmitter):
     def __init__(self, player_state):
+        super(VoiceStateSyncer, self).__init__()
+
         self.state = dict(
-            fsm_state=SyncerState.DISCONNECTED
+            fsm_state=SyncerState.DISCONNECTED,
+            volume=1.0,
+            playback_started_timestamp=None,
+            playback_progress=None,
+            playback_ref=None,
+            client=None
         )
+
         self.bot = player_state.bot
         self._loop_task = None
         self._queue = asyncio.Queue()
-
-    @property
-    def fsm_state(self):
-        return self.state['fsm_state']
 
     def start(self):
         if not self._loop_task:
@@ -72,10 +77,19 @@ class VoiceStateSyncer(object):
             return dict(state, client=None, fsm_state=SyncerState.AWAITING_CLIENT)
 
         if op == 'play':
-            return dict(state, playing_url=data['url'])
+            return dict(state, playing_url=data['url'], playback_progress=0)
 
         if op == 'stop':
-            return dict(state, playing_url=None)
+            return dict(state, playing_url=None, playback_started_timestamp=None)
+
+        if op == 'volume':
+            return dict(state, volume=data['volume'])
+
+        if op == 'playback_progress':
+            if data['playback_ref'] == state['playback_ref']:
+                return dict(state, playback_started_timestamp=time() - data['playback_progress'])
+
+            return state
 
         if op == 'halt':
             return dict(state, fsm_state=SyncerState.HALT)
@@ -96,11 +110,12 @@ class VoiceStateSyncer(object):
         client = await self.bot.join_voice_channel(next_state['channel'])
 
         if client:
-            client.once('down', self.down)
-            # Send progress to tick fsm to play.
+            client.once('remote:down', self._down)
+            client.on('playback:progress', self._sync_playback_progress)
+            self.emit('client:connected', client)
             return await self.state_do_sync(
                 prev_state,
-                dict(next_state, client=client, fsm_state=SyncerState.CONNECTED)
+                dict(next_state, client=client, playback_ref=None, fsm_state=SyncerState.CONNECTED)
             )
 
         timeout = self.bot.loop.call_later(2, self.send, 'progress')
@@ -124,20 +139,33 @@ class VoiceStateSyncer(object):
         # FSM Wants us to sync the state.
         prev_url = prev_state.get('playing_url')
         next_url = next_state.get('playing_url')
+        next_volume = next_state.get('volume')
         client = next_state['client']
 
         # We don't have a URL, so we should stop.
         if not next_url and prev_url:
             await client.stop()
-            return dict(next_state, playing_url=None)
+            return dict(next_state, playing_url=None, playback_ref=None)
 
+        is_new_client = prev_state.get('client') != client
         # We have a next url, or the client changed, so we should tell the client to play the new URL.
-        if next_url and (prev_url != next_url or prev_state.get('client') != client):
-            await client.play(next_url, ytdl_options={
-                'default_search': 'auto',
-                'quiet': True,
-            })
-            return dict(next_state, playing_url=next_url)
+        if next_url and (prev_url != next_url or is_new_client):
+            if not is_new_client:
+                estimated_progress = 0
+            else:
+                estimated_progress = time() - (next_state.get('playback_started_timestamp', None) or time())
+
+            playback_ref = await client.play(next_volume, next_url, estimated_progress)
+            new_state = dict(next_state, playback_ref=playback_ref)
+
+            if not is_new_client:
+                new_state['playback_started_timestamp'] = time()
+
+            return new_state
+
+        prev_volume = prev_state.get('volume')
+        if prev_volume != next_volume:
+            await client.set_volume(next_volume)
 
         return next_state
 
@@ -147,11 +175,29 @@ class VoiceStateSyncer(object):
     def play(self, url):
         self.send('play', url=url)
 
+    def volume(self, volume):
+        self.send('volume', volume=volume)
+
     def stop(self):
         self.send('stop')
 
-    def down(self, reason=None):
+    def _down(self, reason=None):
         self.send('down')
+
+    def _sync_playback_progress(self, playback_ref, playback_progress):
+        self.send('playback_progress', playback_ref=playback_ref, playback_progress=playback_progress)
 
     def disconnect(self):
         self.send('halt')
+
+    @property
+    def fsm_state(self):
+        return self.state['fsm_state']
+
+    @property
+    def playback_ref(self):
+        return self.state.get('playback_ref')
+
+    @property
+    def estimated_progress(self):
+        return time() - (self.state.get('playback_started_timestamp', None) or time())

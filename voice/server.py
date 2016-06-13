@@ -41,20 +41,30 @@ class RemoteVoiceClient(EventEmitter):
 
     async def disconnect(self):
         await self.client.server.discord.ws.voice_state(self.guild_id, None, self_mute=True)
-        ret_value = await self.remote_call('disconnect', silent=True)
-        self.emit('disconnect', ret_value)
-        return ret_value
+        return await self.remote_call('disconnect', silent=True)
+        # self.emit('disconnect', ret_value)
+        # return ret_value
 
-    async def connect(self):
-        ret_value = await self.remote_call('connect')
-        self.emit('connected', ret_value)
-        return ret_value
+    def connect(self):
+        return self.remote_call('connect')
+        # self.emit('connected', ret_value)
+        # return ret_value
+
+    async def play(self, *args, **kwargs):
+        playback_ref = await self.remote_call('play', *args, **kwargs)
+        self.emit('playback:start', playback_ref=playback_ref)
+        return playback_ref
 
     def __getattr__(self, item):
         def remote_function(*args, **kwargs):
             return self.remote_call(item, *args, **kwargs)
 
         return remote_function
+
+    def __repr__(self):
+        return '<RemoteClient #%s>' % (
+            self.remote_ref
+        )
 
 
 class ClientHandler(rpc.server.ClientHandler):
@@ -73,10 +83,15 @@ class ClientHandler(rpc.server.ClientHandler):
     def handle_cast_client_count_update(self, client_count):
         self.client_count = client_count
 
+    def handle_cast_remote_emit(self, remote_ref, event, *args, **kwargs):
+        remote_voice_client = self.refs.get(remote_ref)
+        if remote_voice_client:
+            remote_voice_client.emit(event, *args, **kwargs)
+
     def handle_close(self, reason=None):
         for voice_client in self.refs.values():
             self.loop.create_task(self.server.discord.ws.voice_state(voice_client.guild_id, None))
-            voice_client.emit('down', reason)
+            voice_client.emit('remote:down', reason)
 
         self.refs.clear()
 
@@ -108,16 +123,17 @@ class Server(rpc.server.Server):
             return "hello_world"
 
     def get_server_info(self, client):
+        client.client_connection_id = self.generate_id(client.client_id)
+
         return {
-            'username': self.discord.user.name
+            'username': self.discord.user.name,
+            'connection_id': client.client_connection_id
         }
 
     def handle_client_disconnected(self, client):
-        print("Client disconnected", client)
         self.clients_by_connection_id.pop(client.client_connection_id, None)
 
     def handle_client_connected(self, client):
-        client.client_connection_id = self.generate_id(client.client_id)
         self.clients_by_connection_id[client.client_connection_id] = client
 
     def select_client(self, region):

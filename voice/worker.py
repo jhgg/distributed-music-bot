@@ -1,6 +1,7 @@
 import discord
 
 import rpc.client
+from lib.time_format import format_seconds_to_hhmmss
 
 
 class RemoteVoiceClient(discord.VoiceClient):
@@ -35,6 +36,7 @@ class RemoteVoiceClientWrapper(object):
         self.remote_ref = remote_ref
         self.voice_client = None
         self.current_player = None
+        self._playback_ref_seq = 0
 
     def __init_voice_client__(self, *args, **kwargs):
         if self.voice_client:
@@ -56,13 +58,31 @@ class RemoteVoiceClientWrapper(object):
         self.current_player = None
         self.client.remove_remote_voice_client_wrapper(self.remote_ref)
 
-    async def play(self, what, *, ytdl_options):
+    async def play(self, volume, download_url, progress=0):
         if self.current_player:
             self.current_player.stop()
 
-        self.current_player = player = await self.voice_client.create_ytdl_player(what, ytdl_options=ytdl_options)
+        self._playback_ref_seq += 1
+        playback_ref = '%s.%s' % (self.remote_ref, self._playback_ref_seq)
+        before_options = None
+        if progress:
+            before_options = '-ss %s' % format_seconds_to_hhmmss(progress)
+
+        self.current_player = player = self.voice_client.create_ffmpeg_player(
+            download_url,
+            before_options=before_options,
+            after=lambda: self.emit('playback:done', playback_ref=playback_ref)
+        )
+        self.current_player.volume = volume
         player.start()
-        return str(player)
+        return playback_ref
+
+    async def set_volume(self, new_volume):
+        if self.current_player:
+            self.current_player.volume = new_volume
+
+    def emit(self, event, *args, **kwargs):
+        self.client.cast('remote_emit', self.remote_ref, event, *args, **kwargs)
 
     async def stop(self):
         if self.current_player:
@@ -90,6 +110,7 @@ class RemoteVoiceClientWrapper(object):
 class VoiceWorker(rpc.client.Client):
     def __init__(self, *args, **kwargs):
         super(VoiceWorker, self).__init__(*args, **kwargs)
+        self.client_connection_id = None
         self._voice_client_ref_seq = 0
         self._voice_clients = {}
         self._max_clients = 15
@@ -98,6 +119,7 @@ class VoiceWorker(rpc.client.Client):
         ]
 
     async def handle_ready(self, info):
+        self.client_connection_id = info['connection_id']
         print("Connected to HQ:", info)
 
     def get_remote_voice_client_wrapper(self, remote_ref):
@@ -115,7 +137,7 @@ class VoiceWorker(rpc.client.Client):
     def handle_call_make_voice_client_ref(self):
         self._voice_client_ref_seq += 1
         remote_ref = self._voice_client_ref_seq
-        return remote_ref
+        return '%s.%s' % (self.client_connection_id, remote_ref)
 
     def handle_call_remote_voice_client__call(self, func, remote_ref, *args, **kwargs):
         print("handle call remote", func, remote_ref, args, kwargs)

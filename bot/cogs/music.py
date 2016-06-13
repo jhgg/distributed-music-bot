@@ -4,6 +4,8 @@
 import discord
 from discord.ext import commands
 import player
+from lib.time_format import format_seconds_to_hhmmss
+from player.ytdl import extract_info
 
 from syncer.voice_syncer import SyncerState
 
@@ -44,13 +46,25 @@ class Music:
             if not state:
                 return
 
-        state.syncer.play(song)
+        state.channel = ctx.message.channel
+        info = await extract_info(self.bot.loop, song, ytdl_options={
+            'default_search': 'auto',
+            'quiet': True,
+        })
+        await self.bot.say('Playing %s %s' % (info.title, info.duration))
+        state.syncer.play(info.download_url)
 
     @commands.command(pass_context=True, no_pm=True)
     async def stop(self, ctx):
         state = player.get_player_state(ctx.message.server)
         if state:
-            state.syncer.stop()
+            state.syncer.stop()\
+
+    @commands.command(pass_context=True, no_pm=True)
+    async def progress(self, ctx):
+        state = player.get_player_state(ctx.message.server)
+        if state:
+            await self.bot.say('estimated progress is  %s' % format_seconds_to_hhmmss(state.syncer.estimated_progress))
 
     @commands.command(pass_context=True, no_pm=True)
     async def state(self, ctx):
@@ -60,29 +74,12 @@ class Music:
         else:
             await self.bot.say('no fsm state')
 
-        #
-    # @commands.command(pass_context=True, no_pm=True)
-    # async def pause(self, ctx):
-    #     state = self.get_voice_state(ctx.message.server)
-    #
-    #     if state.voice is None:
-    #         await self.bot.say('We are not connected')
-    #
-    #     did_stop = state.voice.pause()
-    #     if did_stop:
-    #         await self.bot.say('Stopped the music')
-    #     else:
-    #         await self.bot.say('Nothing to stop sorry')
-    #
-    # @commands.command(pass_context=True, no_pm=True)
-    # async def resume(self, ctx):
-    #     state = self.get_voice_state(ctx.message.server)
-    #
-    #     if state.voice is None:
-    #         await self.bot.say('We are not connected')
-    #
-    #     did_stop = state.voice.resume()
-    #     if did_stop:
-    #         await self.bot.say('Stopped the music')
-    #     else:
-    #         await self.bot.say('Nothing to stop sorry')
+    @commands.command(pass_context=True, no_pm=True)
+    async def volume(self, ctx, value: int):
+        """Sets the volume of the currently playing song."""
+
+        state = player.get_player_state(ctx.message.server)
+        if state:
+            new_volume = value / 100.0
+            state.syncer.volume(new_volume)
+            await self.bot.say('Set the volume to {:.0%}'.format(new_volume))
